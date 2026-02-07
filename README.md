@@ -1,5 +1,8 @@
-# PDF Translator
+# TranslatePDF
 
+![Test](https://github.com/BhanuJodha/PDF-Translator/actions/workflows/test.yml/badge.svg)
+![Lint](https://github.com/BhanuJodha/PDF-Translator/actions/workflows/lint.yml/badge.svg)
+![Type Check](https://github.com/BhanuJodha/PDF-Translator/actions/workflows/typecheck.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -21,7 +24,7 @@ This tool extracts text from PDF pages using [Surya OCR](https://github.com/VikP
 ## Installation
 
 ```bash
-pip install pdf-translator
+pip install translatepdf
 ```
 
 ### System Dependencies
@@ -45,25 +48,25 @@ conda install -c conda-forge poppler
 
 ```bash
 # Basic usage - auto-detects PDF type, translates English to Hindi
-pdf-translator document.pdf
+translatepdf document.pdf
 
 # Specify languages
-pdf-translator document.pdf --source en --target hi
+translatepdf document.pdf --source en --target hi
 
 # Force digital mode (faster for PDFs with embedded text)
-pdf-translator document.pdf --mode digital
+translatepdf document.pdf --mode digital
 
 # Force OCR mode (for scanned documents)
-pdf-translator document.pdf --mode ocr
+translatepdf document.pdf --mode ocr
 
 # Translate specific pages
-pdf-translator document.pdf --pages 1-5
+translatepdf document.pdf --pages 1-5
 
 # Custom output path
-pdf-translator document.pdf -o translated.pdf
+translatepdf document.pdf -o translated.pdf
 
 # Higher quality OCR (slower)
-pdf-translator document.pdf --dpi 300
+translatepdf document.pdf --dpi 300
 ```
 
 ### Python API

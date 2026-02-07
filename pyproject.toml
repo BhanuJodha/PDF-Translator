@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "translatepdf"
-version = "0.1.0"
+version = "1.0.0"
 description = "Translate PDF documents using OCR and machine translation"
 readme = "README.md"
 license = {text = "MIT"}

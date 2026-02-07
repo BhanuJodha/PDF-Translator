@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/pdf-translator/
+      url: https://pypi.org/project/translatepdf/
     permissions:
       id-token: write  # Required for trusted publishing
 

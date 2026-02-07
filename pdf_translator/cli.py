@@ -24,6 +24,13 @@ Examples:
   pdf-translator document.pdf --pages 1-5
   pdf-translator document.pdf --pages "1,3,5-10"
   pdf-translator document.pdf --device cuda --dpi 300
+  pdf-translator document.pdf --mode digital  # For digital PDFs (faster)
+  pdf-translator document.pdf --mode ocr      # Force OCR mode
+
+Translation Modes:
+  auto      Auto-detect PDF type (default)
+  digital   For PDFs with embedded text (faster, preserves structure)
+  ocr       For scanned PDFs (uses Surya OCR)
 
 Page Range Formats:
   all       Process all pages (default)
@@ -93,7 +100,16 @@ Page Range Formats:
         type=str,
         choices=["auto", "cuda", "mps", "cpu"],
         default="auto",
-        help="Compute device (default: auto-detect)",
+        help="Compute device for OCR mode (default: auto-detect)",
+    )
+
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=str,
+        choices=["auto", "ocr", "digital"],
+        default="auto",
+        help="Translation mode: auto (detect), ocr (image-based), digital (native PDF)",
     )
 
     parser.add_argument(
@@ -124,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
     config = TranslationConfig(
         source_lang=args.source,
         target_lang=args.target,
+        mode=args.mode,
         device=args.device,
         dpi=args.dpi,
         ocr_batch_size=args.batch_size,

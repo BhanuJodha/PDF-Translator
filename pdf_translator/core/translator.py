@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import numpy as np
 from pdf2image import convert_from_path
@@ -13,6 +13,8 @@ from PIL import Image
 
 from pdf_translator.core.config import TranslationConfig
 from pdf_translator.core.ocr import OCREngine
+from pdf_translator.core.pdf_extractor import PDFExtractor
+from pdf_translator.core.pdf_renderer import PDFRenderer
 from pdf_translator.core.renderer import TextRenderer
 from pdf_translator.core.text_translator import TextTranslator
 
@@ -23,6 +25,10 @@ class PDFTranslator:
 
     Coordinates the OCR, translation, and rendering pipeline.
     Supports batch processing and parallel execution for speed.
+
+    Supports two modes:
+    - OCR mode: For scanned PDFs, uses Surya OCR to extract text from images
+    - Digital mode: For digital PDFs, extracts embedded text directly (faster)
 
     Example:
         >>> from pdf_translator import PDFTranslator
@@ -40,9 +46,11 @@ class PDFTranslator:
         self.config = config or TranslationConfig()
         self.config.apply_environment()
 
-        self._ocr = OCREngine(self.config)
+        self._ocr: OCREngine | None = None  # Lazy loaded for OCR mode
         self._text_translator: TextTranslator | None = None
         self._renderer: TextRenderer | None = None
+        self._pdf_renderer: PDFRenderer | None = None  # For digital mode
+        self._last_page_count: int = 0  # Track pages processed for logging
 
     def translate(
         self,
@@ -79,16 +87,73 @@ class PDFTranslator:
         src_lang = source_lang or self.config.source_lang
         tgt_lang = target_lang or self.config.target_lang
 
-        self._text_translator = TextTranslator(src_lang, tgt_lang)
-        self._renderer = TextRenderer(tgt_lang)
+        # Determine which mode to use
+        mode = self._determine_mode(input_path)
 
-        self._log_start(input_path, output_path, src_lang, tgt_lang, page_range)
+        self._text_translator = TextTranslator(src_lang, tgt_lang)
+
+        self._log_start(input_path, output_path, src_lang, tgt_lang, page_range, mode)
 
         total_start = time.time()
+
+        if mode == "digital":
+            result = self._translate_digital(
+                input_path, output_path, page_range, progress_callback
+            )
+        else:
+            result = self._translate_ocr(
+                input_path, output_path, tgt_lang, page_range, progress_callback
+            )
+
+        self._log_complete(total_start, self._last_page_count, output_path)
+        return result
+
+    def _determine_mode(self, input_path: Path) -> Literal["ocr", "digital"]:
+        """
+        Determine which translation mode to use.
+
+        Args:
+            input_path: Path to the PDF file
+
+        Returns:
+            'ocr' or 'digital' based on config and PDF content
+        """
+        if self.config.mode == "ocr":
+            return "ocr"
+        if self.config.mode == "digital":
+            return "digital"
+
+        # Auto-detect: check if PDF has extractable text
+        with PDFExtractor(input_path) as extractor:
+            is_digital = extractor.is_digital_pdf()
+
+        if is_digital:
+            print("Detected: Digital PDF (has extractable text)")
+            return "digital"
+        else:
+            print("Detected: Scanned PDF (using OCR)")
+            return "ocr"
+
+    def _translate_ocr(
+        self,
+        input_path: Path,
+        output_path: Path,
+        target_lang: str,
+        page_range: str,
+        progress_callback: Callable[[str, int, int], None] | None,
+    ) -> Path:
+        """
+        Translate using OCR pipeline (for scanned PDFs).
+
+        Converts PDF to images, runs OCR, translates, and renders.
+        """
+        self._renderer = TextRenderer(target_lang)
+        self._ocr = OCREngine(self.config)
 
         # Step 1: Convert PDF pages to images
         self._report(progress_callback, "Converting PDF", 0, 4)
         images, page_indices = self._load_pdf(input_path, page_range)
+        self._last_page_count = len(images)
 
         # Step 2: Run OCR on all pages
         self._report(progress_callback, "Running OCR", 1, 4)
@@ -103,9 +168,83 @@ class PDFTranslator:
         self._save_pdf(processed, output_path)
 
         self._report(progress_callback, "Done", 4, 4)
-        self._log_complete(total_start, len(images), output_path)
-
         return output_path
+
+    def _translate_digital(
+        self,
+        input_path: Path,
+        output_path: Path,
+        page_range: str,
+        progress_callback: Callable[[str, int, int], None] | None,
+    ) -> Path:
+        """
+        Translate using digital PDF pipeline (for PDFs with embedded text).
+
+        Extracts text directly, translates, and replaces in-place.
+        """
+        assert self._text_translator is not None
+
+        with PDFExtractor(input_path) as extractor:
+            total_pages = extractor.page_count
+            page_indices = self._parse_page_range(page_range, total_pages)
+
+            if not page_indices:
+                raise ValueError("No valid pages to process")
+
+            self._last_page_count = len(page_indices)
+
+            # Initialize PDF renderer
+            self._pdf_renderer = PDFRenderer(self._text_translator.target_lang)
+            self._pdf_renderer.open(input_path)
+
+            try:
+                # Step 1: Extract text
+                self._report(progress_callback, "Extracting text", 0, 3)
+                print(f"Extracting text from {len(page_indices)} pages...")
+
+                all_blocks = []
+                for page_num in page_indices:
+                    blocks = extractor.extract_text_blocks(page_num)
+                    all_blocks.append((page_num, blocks))
+                    print(f"  Page {page_num + 1}: {len(blocks)} text blocks")
+
+                total_blocks = sum(len(b) for _, b in all_blocks)
+                print(f"  Total: {total_blocks} text blocks\n")
+
+                # Step 2: Translate
+                self._report(progress_callback, "Translating", 1, 3)
+                print("Translating text...")
+                start = time.time()
+
+                for page_num, blocks in all_blocks:
+                    if not blocks:
+                        continue
+
+                    texts = [b.text for b in blocks]
+                    translations = self._text_translator.translate_batch(texts)
+
+                    # Replace text on page
+                    self._pdf_renderer.replace_text_on_page(
+                        page_num, blocks, translations
+                    )
+
+                print(f"  Done in {time.time() - start:.2f}s\n")
+
+                # Step 3: Save
+                self._report(progress_callback, "Saving PDF", 2, 3)
+                print("Saving PDF...")
+                start = time.time()
+
+                self._pdf_renderer.save(output_path)
+
+                print(f"  Saved to {output_path}")
+                print(f"  Done in {time.time() - start:.2f}s\n")
+
+                self._report(progress_callback, "Done", 3, 3)
+                return output_path
+
+            finally:
+                self._pdf_renderer.close()
 
     def _load_pdf(
         self, path: Path, page_range: str
@@ -138,6 +277,7 @@ class PDFTranslator:
         print("Running OCR...")
         start = time.time()
 
+        assert self._ocr is not None
         all_regions = []
         batch_size = self.config.ocr_batch_size
 
@@ -257,6 +397,7 @@ class PDFTranslator:
         source_lang: str,
         target_lang: str,
         page_range: str,
+        mode: str = "ocr",
     ) -> None:
         """Print startup information."""
         print("=" * 50)
@@ -266,7 +407,9 @@ class PDFTranslator:
         print(f"Output: {output_path}")
         print(f"Languages: {source_lang} -> {target_lang}")
         print(f"Pages: {page_range}")
-        print(f"Device: {self.config.device}")
+        print(f"Mode: {mode}")
+        if mode == "ocr":
+            print(f"Device: {self.config.device}")
         print("=" * 50)
         print()
 

@@ -1,5 +1,11 @@
 # PDF Translator
 
+![Test](https://github.com/bhanurathore/pdf-translator/actions/workflows/test.yml/badge.svg)
+![Lint](https://github.com/bhanurathore/pdf-translator/actions/workflows/lint.yml/badge.svg)
+![Type Check](https://github.com/bhanurathore/pdf-translator/actions/workflows/typecheck.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 Translate PDFs using OCR and machine translation—supports both scanned documents and digital PDFs.
 
 This tool extracts text from PDF pages using [Surya OCR](https://github.com/VikParuchuri/surya) (for scanned documents) or [PyMuPDF](https://pymupdf.readthedocs.io/) (for digital PDFs), translates it via Google Translate, and renders the translated text back onto the original document—preserving layout, colors, and formatting.

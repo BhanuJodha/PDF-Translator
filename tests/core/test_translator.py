@@ -20,7 +20,8 @@ class TestPDFTranslatorInit:
         assert translator.config is not None
         assert translator.config.source_lang == "en"
         assert translator.config.target_lang == "hi"
-        assert translator._ocr is not None
+        assert translator.config.mode == "auto"
+        assert translator._ocr is None  # Lazy loaded
         assert translator._text_translator is None
         assert translator._renderer is None
 
@@ -128,7 +129,8 @@ class TestPDFTranslatorTranslate:
 
     def test_translate_default_output_path(self, tmp_path):
         """Should generate default output path."""
-        translator = PDFTranslator()
+        config = TranslationConfig(mode="ocr")  # Force OCR mode to skip PDF detection
+        translator = PDFTranslator(config)
         input_path = tmp_path / "document.pdf"
         input_path.write_bytes(b"%PDF-1.4")
 
@@ -149,7 +151,8 @@ class TestPDFTranslatorTranslate:
 
     def test_translate_custom_output_path(self, tmp_path):
         """Should use custom output path when provided."""
-        translator = PDFTranslator()
+        config = TranslationConfig(mode="ocr")  # Force OCR mode
+        translator = PDFTranslator(config)
         input_path = tmp_path / "input.pdf"
         output_path = tmp_path / "custom_output.pdf"
         input_path.write_bytes(b"%PDF-1.4")
@@ -170,7 +173,8 @@ class TestPDFTranslatorTranslate:
 
     def test_translate_overrides_languages(self, tmp_path):
         """Should use provided languages over config."""
-        translator = PDFTranslator()
+        config = TranslationConfig(mode="ocr")  # Force OCR mode
+        translator = PDFTranslator(config)
         input_path = tmp_path / "test.pdf"
         input_path.write_bytes(b"%PDF-1.4")
 
@@ -196,7 +200,8 @@ class TestPDFTranslatorTranslate:
 
     def test_translate_progress_callback(self, tmp_path):
         """Should call progress callback at each stage."""
-        translator = PDFTranslator()
+        config = TranslationConfig(mode="ocr")  # Force OCR mode
+        translator = PDFTranslator(config)
         input_path = tmp_path / "test.pdf"
         input_path.write_bytes(b"%PDF-1.4")
 
@@ -300,3 +305,153 @@ class TestPDFTranslatorLogging:
         captured = capsys.readouterr()
         assert "Complete!" in captured.out
         assert "Total time:" in captured.out
+
+
+class TestPDFTranslatorModeDetection:
+    """Tests for translation mode detection."""
+
+    def test_force_ocr_mode(self):
+        """Should return 'ocr' when mode is set to 'ocr'."""
+        config = TranslationConfig(mode="ocr")
+        translator = PDFTranslator(config)
+
+        # Create a dummy path (won't be accessed since mode is forced)
+        from pathlib import Path
+
+        result = translator._determine_mode(Path("dummy.pdf"))
+        assert result == "ocr"
+
+    def test_force_digital_mode(self):
+        """Should return 'digital' when mode is set to 'digital'."""
+        config = TranslationConfig(mode="digital")
+        translator = PDFTranslator(config)
+
+        from pathlib import Path
+
+        result = translator._determine_mode(Path("dummy.pdf"))
+        assert result == "digital"
+
+    @patch("pdf_translator.core.translator.PDFExtractor")
+    def test_auto_detect_digital(self, mock_extractor_class, tmp_path):
+        """Should detect digital PDF in auto mode."""
+        mock_extractor = MagicMock()
+        mock_extractor.is_digital_pdf.return_value = True
+        mock_extractor.__enter__ = MagicMock(return_value=mock_extractor)
+        mock_extractor.__exit__ = MagicMock(return_value=False)
+        mock_extractor_class.return_value = mock_extractor
+
+        config = TranslationConfig(mode="auto")
+        translator = PDFTranslator(config)
+
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        result = translator._determine_mode(pdf_path)
+        assert result == "digital"
+
+    @patch("pdf_translator.core.translator.PDFExtractor")
+    def test_auto_detect_scanned(self, mock_extractor_class, tmp_path):
+        """Should detect scanned PDF in auto mode."""
+        mock_extractor = MagicMock()
+        mock_extractor.is_digital_pdf.return_value = False
+        mock_extractor.__enter__ = MagicMock(return_value=mock_extractor)
+        mock_extractor.__exit__ = MagicMock(return_value=False)
+        mock_extractor_class.return_value = mock_extractor
+
+        config = TranslationConfig(mode="auto")
+        translator = PDFTranslator(config)
+
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+
+        result = translator._determine_mode(pdf_path)
+        assert result == "ocr"
+
+
+class TestPDFTranslatorDigitalPipeline:
+    """Tests for digital PDF translation pipeline."""
+
+    @patch("pdf_translator.core.translator.PDFExtractor")
+    @patch("pdf_translator.core.translator.PDFRenderer")
+    @patch("pdf_translator.core.translator.TextTranslator")
+    def test_translate_digital_extracts_text(
+        self, mock_translator_class, mock_renderer_class, mock_extractor_class, tmp_path
+    ):
+        """Should extract text from digital PDF."""
+        # Setup mocks
+        mock_extractor = MagicMock()
+        mock_extractor.page_count = 1
+        mock_extractor.extract_text_blocks.return_value = []
+        mock_extractor.__enter__ = MagicMock(return_value=mock_extractor)
+        mock_extractor.__exit__ = MagicMock(return_value=False)
+        mock_extractor_class.return_value = mock_extractor
+
+        mock_renderer = MagicMock()
+        mock_renderer_class.return_value = mock_renderer
+
+        mock_text_translator = MagicMock()
+        mock_text_translator.target_lang = "hi"
+        mock_translator_class.return_value = mock_text_translator
+
+        config = TranslationConfig(mode="digital")
+        translator = PDFTranslator(config)
+
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+        output_path = tmp_path / "output.pdf"
+
+        translator._text_translator = mock_text_translator
+        translator._last_page_count = 0
+
+        translator._translate_digital(pdf_path, output_path, "all", None)
+
+        mock_extractor.extract_text_blocks.assert_called()
+
+    @patch("pdf_translator.core.translator.PDFExtractor")
+    @patch("pdf_translator.core.translator.PDFRenderer")
+    @patch("pdf_translator.core.translator.TextTranslator")
+    def test_translate_digital_replaces_text(
+        self, mock_translator_class, mock_renderer_class, mock_extractor_class, tmp_path
+    ):
+        """Should replace text in digital PDF."""
+        from pdf_translator.core.pdf_extractor import TextBlock
+
+        # Setup mocks
+        mock_block = TextBlock(
+            text="Hello",
+            bbox=(10, 20, 100, 40),
+            font_name="Helvetica",
+            font_size=12.0,
+            color=0,
+            flags=0,
+        )
+
+        mock_extractor = MagicMock()
+        mock_extractor.page_count = 1
+        mock_extractor.extract_text_blocks.return_value = [mock_block]
+        mock_extractor.__enter__ = MagicMock(return_value=mock_extractor)
+        mock_extractor.__exit__ = MagicMock(return_value=False)
+        mock_extractor_class.return_value = mock_extractor
+
+        mock_renderer = MagicMock()
+        mock_renderer_class.return_value = mock_renderer
+
+        mock_text_translator = MagicMock()
+        mock_text_translator.target_lang = "hi"
+        mock_text_translator.translate_batch.return_value = ["नमस्ते"]
+        mock_translator_class.return_value = mock_text_translator
+
+        config = TranslationConfig(mode="digital")
+        translator = PDFTranslator(config)
+
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+        output_path = tmp_path / "output.pdf"
+
+        translator._text_translator = mock_text_translator
+        translator._last_page_count = 0
+
+        translator._translate_digital(pdf_path, output_path, "all", None)
+
+        mock_renderer.replace_text_on_page.assert_called()
+        mock_renderer.save.assert_called_once()

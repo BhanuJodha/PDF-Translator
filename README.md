@@ -1,12 +1,14 @@
 # PDF Translator
 
-Translate scanned PDFs and image-based documents using OCR and machine translation.
+Translate PDFs using OCR and machine translation—supports both scanned documents and digital PDFs.
 
-This tool extracts text from PDF pages using [Surya OCR](https://github.com/VikParuchuri/surya), translates it via Google Translate, and renders the translated text back onto the original document—preserving layout, colors, and formatting.
+This tool extracts text from PDF pages using [Surya OCR](https://github.com/VikParuchuri/surya) (for scanned documents) or [PyMuPDF](https://pymupdf.readthedocs.io/) (for digital PDFs), translates it via Google Translate, and renders the translated text back onto the original document—preserving layout, colors, and formatting.
 
 ## Features
 
-- **High-quality OCR** powered by Surya (supports 90+ languages)
+- **Dual-mode translation**: Automatically detects PDF type and uses the optimal method
+  - **Digital PDFs**: Fast text extraction and in-place replacement (no OCR needed)
+  - **Scanned PDFs**: High-quality OCR powered by Surya (supports 90+ languages)
 - **Automatic text color detection** ensures readability on any background
 - **Batch processing** for faster translation of multi-page documents
 - **GPU acceleration** on NVIDIA (CUDA) and Apple Silicon (MPS)
@@ -39,11 +41,17 @@ conda install -c conda-forge poppler
 ### Command Line
 
 ```bash
-# Basic usage - translates English to Hindi by default
+# Basic usage - auto-detects PDF type, translates English to Hindi
 pdf-translator document.pdf
 
 # Specify languages
 pdf-translator document.pdf --source en --target hi
+
+# Force digital mode (faster for PDFs with embedded text)
+pdf-translator document.pdf --mode digital
+
+# Force OCR mode (for scanned documents)
+pdf-translator document.pdf --mode ocr
 
 # Translate specific pages
 pdf-translator document.pdf --pages 1-5
@@ -51,7 +59,7 @@ pdf-translator document.pdf --pages 1-5
 # Custom output path
 pdf-translator document.pdf -o translated.pdf
 
-# Higher quality (slower)
+# Higher quality OCR (slower)
 pdf-translator document.pdf --dpi 300
 ```
 
@@ -60,14 +68,25 @@ pdf-translator document.pdf --dpi 300
 ```python
 from pdf_translator import PDFTranslator, TranslationConfig
 
-# Simple usage
+# Simple usage - auto-detects PDF type
 translator = PDFTranslator()
 translator.translate("document.pdf", target_lang="hi")
 
-# With custom configuration
+# Force digital mode for PDFs with embedded text
 config = TranslationConfig(
     source_lang="en",
     target_lang="hi",
+    mode="digital",  # "auto", "ocr", or "digital"
+)
+
+translator = PDFTranslator(config)
+translator.translate("document.pdf")
+
+# Force OCR mode with custom settings
+config = TranslationConfig(
+    source_lang="en",
+    target_lang="hi",
+    mode="ocr",
     device="mps",  # or "cuda", "cpu"
     dpi=200,
 )
@@ -102,10 +121,23 @@ config = TranslationConfig.for_cpu()
 | `--output` | `-o` | Output file path | `input_translated.pdf` |
 | `--source` | `-s` | Source language code | `en` |
 | `--target` | `-t` | Target language code | `hi` |
+| `--mode` | `-m` | Translation mode: `auto`, `ocr`, `digital` | `auto` |
 | `--pages` | `-p` | Page range (e.g., "1-5", "1,3,5") | `all` |
-| `--dpi` | `-d` | Rendering resolution | `200` |
-| `--batch-size` | `-b` | Pages per OCR batch | `4` |
-| `--device` | | Compute device | `auto` |
+| `--dpi` | `-d` | Rendering resolution (OCR mode only) | `200` |
+| `--batch-size` | `-b` | Pages per OCR batch (OCR mode only) | `4` |
+| `--device` | | Compute device (OCR mode only) | `auto` |
+
+### Translation Modes
+
+| Mode | Description | Best For |
+|------|-------------|----------|
+| `auto` | Auto-detect PDF type | Most PDFs (default) |
+| `digital` | Extract embedded text directly | Digital/native PDFs, Word exports, LaTeX |
+| `ocr` | Use Surya OCR on page images | Scanned documents, image-based PDFs |
+
+**Digital mode** is significantly faster and produces better results for PDFs with embedded text (e.g., documents created in Word, LaTeX, or other text editors).
+
+**OCR mode** is required for scanned documents or image-based PDFs where text is not selectable.
 
 ## Supported Languages
 
@@ -124,6 +156,21 @@ Common language codes:
 - `ru` - Russian
 
 ## How It Works
+
+### Auto Mode (Default)
+
+The tool first checks if the PDF contains extractable text. If it does, it uses **digital mode**; otherwise, it falls back to **OCR mode**.
+
+### Digital Mode
+
+1. **Text Extraction**: PyMuPDF extracts text with position and formatting info
+2. **Translation**: Text is batch-translated via Google Translate
+3. **In-Place Replacement**: Original text is replaced with translations using redaction annotations
+4. **Output**: Native PDF with translated text
+
+This mode preserves the original PDF structure and is much faster than OCR.
+
+### OCR Mode
 
 1. **PDF to Images**: Each page is rendered as a high-resolution image
 2. **OCR**: Surya detects and recognizes text regions with their positions
@@ -240,7 +287,9 @@ pdf-translator/
 │   ├── core/                    # Core functionality
 │   │   ├── config.py            # Configuration management
 │   │   ├── ocr.py               # Surya OCR wrapper
-│   │   ├── renderer.py          # Text rendering
+│   │   ├── pdf_extractor.py     # Digital PDF text extraction
+│   │   ├── pdf_renderer.py      # Digital PDF text replacement
+│   │   ├── renderer.py          # Image-based text rendering
 │   │   ├── text_translator.py   # Google Translate wrapper
 │   │   └── translator.py        # Main orchestrator
 │   └── utils/                   # Utilities
@@ -252,6 +301,8 @@ pdf-translator/
 │   ├── core/                    # Tests for core modules
 │   │   ├── test_config.py
 │   │   ├── test_ocr.py
+│   │   ├── test_pdf_extractor.py
+│   │   ├── test_pdf_renderer.py
 │   │   ├── test_renderer.py
 │   │   └── test_text_translator.py
 │   └── utils/                   # Tests for utilities
@@ -281,5 +332,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [Surya OCR](https://github.com/VikParuchuri/surya) for the excellent OCR engine
+- [PyMuPDF](https://pymupdf.readthedocs.io/) for digital PDF text extraction and manipulation
 - [deep-translator](https://github.com/nidhaloff/deep-translator) for the translation API wrapper
 - [pdf2image](https://github.com/Belval/pdf2image) for PDF rendering

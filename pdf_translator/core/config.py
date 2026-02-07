@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 DeviceType = Literal["cuda", "mps", "cpu", "auto"]
+TranslationMode = Literal["auto", "ocr", "digital"]
 
 
 @dataclass
@@ -18,6 +19,8 @@ class TranslationConfig:
     Attributes:
         source_lang: Source language code (e.g., 'en' for English)
         target_lang: Target language code (e.g., 'hi' for Hindi)
+        mode: Translation mode - 'auto' detects PDF type, 'ocr' forces OCR pipeline,
+              'digital' forces native text extraction (faster for digital PDFs)
         device: Compute device - 'cuda' for NVIDIA GPU, 'mps' for Apple Silicon, 'cpu', or 'auto'
         dpi: Resolution for PDF rendering. Higher = better quality but slower
         ocr_batch_size: Number of pages to process in one OCR batch
@@ -29,6 +32,7 @@ class TranslationConfig:
 
     source_lang: str = "en"
     target_lang: str = "hi"
+    mode: TranslationMode = "auto"
     device: DeviceType = "auto"
     dpi: int = 200
     ocr_batch_size: int = 4
